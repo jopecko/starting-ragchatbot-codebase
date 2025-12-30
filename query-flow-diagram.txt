@@ -1,0 +1,338 @@
+╔═══════════════════════════════════════════════════════════════════════════════════════════════╗
+║                            RAG CHATBOT - QUERY FLOW DIAGRAM                                   ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    FRONTEND (Browser)                                       │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────┐
+    │     User     │  "What is prompt caching?"
+    └──────┬───────┘
+           │
+           ▼
+    ┌──────────────────────────────────────────────┐
+    │  script.js - sendMessage()                   │
+    │  • Disable input                             │
+    │  • Show loading animation                    │
+    │  • Create POST request                       │
+    └──────────────────┬───────────────────────────┘
+                       │
+                       │ POST /api/query
+                       │ {
+                       │   "query": "What is prompt caching?",
+                       │   "session_id": null
+                       │ }
+                       │
+- - - - - - - - - - - -│- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                       │ HTTP Request
+- - - - - - - - - - - -│- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 BACKEND (FastAPI Server)                                    │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────┐
+    │  app.py - @app.post("/api/query")            │
+    │  • Parse request                             │
+    │  • Create/get session_id                     │
+    └──────────────────┬───────────────────────────┘
+                       │ session_id = "session_1"
+                       ▼
+    ┌──────────────────────────────────────────────┐
+    │  rag_system.py - query()                     │
+    │  1. Get conversation history                 │
+    │  2. Build prompt                             │
+    │  3. Call AI generator                        │
+    └──────────────────┬───────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────┐
+    │  session_manager.py                          │
+    │  • get_conversation_history("session_1")     │
+    │  • Returns: None (first query)               │
+    └──────────────────────────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  ai_generator.py - generate_response()                   │
+    │  • Build system prompt                                   │
+    │  • Prepare messages array                                │
+    │  • Include tool definitions                              │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       │ Anthropic API Call
+                       │ {
+                       │   model: "claude-sonnet-4",
+                       │   system: "You are an AI assistant...",
+                       │   messages: [{"role": "user", "content": "..."}],
+                       │   tools: [{search_course_content}],
+                       │   tool_choice: "auto"
+                       │ }
+                       │
+- - - - - - - - - - - -│- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                       │ HTTPS to Anthropic API
+- - - - - - - - - - - -│- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                       │
+                       ▼
+    ╔══════════════════════════════════════════════════════════╗
+    ║           Claude Sonnet 4 (Anthropic API)                ║
+    ║  • Analyzes query                                        ║
+    ║  • Determines course content search needed               ║
+    ║  • Returns tool_use request                              ║
+    ╚══════════════════┬═══════════════════════════════════════╝
+                       │
+                       │ Response: stop_reason = "tool_use"
+                       │ content: [{
+                       │   type: "tool_use",
+                       │   name: "search_course_content",
+                       │   input: {
+                       │     query: "prompt caching",
+                       │     course_name: null,
+                       │     lesson_number: null
+                       │   }
+                       │ }]
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  ai_generator.py - _handle_tool_execution()              │
+    │  • Detect tool_use in response                           │
+    │  • Extract tool name and parameters                      │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  search_tools.py - ToolManager.execute_tool()            │
+    │  • Route to CourseSearchTool                             │
+    │  • Execute with parameters                               │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  search_tools.py - CourseSearchTool.execute()            │
+    │  • query = "prompt caching"                              │
+    │  • course_name = None                                    │
+    │  • lesson_number = None                                  │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  vector_store.py - search()                              │
+    │  1. Resolve course name (skip - None)                    │
+    │  2. Build filter (skip - no filters)                     │
+    │  3. Query ChromaDB                                       │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       ▼
+    ╔══════════════════════════════════════════════════════════╗
+    ║              ChromaDB Vector Database                    ║
+    ║                                                          ║
+    ║  1. Generate embedding for "prompt caching"              ║
+    ║     └─> SentenceTransformer (all-MiniLM-L6-v2)          ║
+    ║         └─> [0.12, -0.45, 0.67, 0.23, ...]             ║
+    ║                                                          ║
+    ║  2. Cosine similarity search                             ║
+    ║     └─> Compare against all 800+ course chunks          ║
+    ║                                                          ║
+    ║  3. Return top 5 matches                                 ║
+    ║     └─> Documents + Metadata + Distances                ║
+    ╚══════════════════┬═══════════════════════════════════════╝
+                       │
+                       │ Results: {
+                       │   documents: [
+                       │     "Lesson 0: Prompt caching retains...",
+                       │     "Course content: ...cost saver...",
+                       │     ...
+                       │   ],
+                       │   metadatas: [
+                       │     {course_title: "Building Towards...",
+                       │      lesson_number: 0, chunk_index: 3},
+                       │     ...
+                       │   ],
+                       │   distances: [0.23, 0.31, 0.42, ...]
+                       │ }
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  search_tools.py - _format_results()                     │
+    │  • Build formatted string with headers                   │
+    │  • Extract sources for UI                                │
+    │  • Store in self.last_sources                            │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       │ Formatted Results:
+                       │ "[Building Towards Computer Use - Lesson 0]
+                       │  Lesson 0 content: Prompt caching retains...
+                       │
+                       │  [Building Towards Computer Use - Lesson 0]
+                       │  Course content: ...cost and latency saver..."
+                       │
+                       │ Sources Tracked:
+                       │ ["Building Towards Computer Use - Lesson 0", ...]
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  ai_generator.py - _handle_tool_execution()              │
+    │  • Add tool results to messages                          │
+    │  • Call Claude again with results                        │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       │ Second API Call to Claude:
+                       │ messages: [
+                       │   {role: "user", content: "What is..."},
+                       │   {role: "assistant", content: [tool_use]},
+                       │   {role: "user", content: [tool_result: "..."]}
+                       │ ]
+                       │
+                       ▼
+    ╔══════════════════════════════════════════════════════════╗
+    ║           Claude Sonnet 4 (Second Call)                  ║
+    ║  • Receives search results                               ║
+    ║  • Synthesizes natural language answer                   ║
+    ║  • Returns text response                                 ║
+    ╚══════════════════┬═══════════════════════════════════════╝
+                       │
+                       │ Final Answer:
+                       │ "Prompt caching is a technique that retains
+                       │  the results of processing prompts between
+                       │  invocations to the model. This allows you
+                       │  to reuse previously processed prompt segments,
+                       │  which significantly reduces both cost and
+                       │  latency..."
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  rag_system.py - query()                                 │
+    │  • Receive response from AI generator                    │
+    │  • Extract sources from tool_manager                     │
+    │  • Update session history                                │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  search_tools.py - ToolManager.get_last_sources()        │
+    │  Returns: ["Building Towards Computer Use - Lesson 0"]   │
+    └──────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  session_manager.py - add_exchange()                     │
+    │  sessions["session_1"] = [                               │
+    │    {role: "user", content: "What is prompt caching?"},   │
+    │    {role: "assistant", content: "Prompt caching is..."}  │
+    │  ]                                                       │
+    └──────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │  app.py - Return QueryResponse                           │
+    │  {                                                       │
+    │    answer: "Prompt caching is a technique...",           │
+    │    sources: ["Building Towards... - Lesson 0"],          │
+    │    session_id: "session_1"                               │
+    │  }                                                       │
+    └──────────────────┬───────────────────────────────────────┘
+                       │
+                       │ JSON Response
+                       │
+- - - - - - - - - - - -│- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                       │ HTTP 200 OK
+- - - - - - - - - - - -│- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    FRONTEND (Browser)                                       │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────┐
+    │  script.js - Response Handler                │
+    │  • Parse JSON response                       │
+    │  • Store session_id                          │
+    │  • Remove loading animation                  │
+    └──────────────────┬───────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────┐
+    │  script.js - addMessage()                    │
+    │  • Convert markdown to HTML (marked.js)      │
+    │  • Create message div                        │
+    │  • Add collapsible sources section           │
+    │  • Append to chat                            │
+    └──────────────────┬───────────────────────────┘
+                       │
+                       ▼
+    ┌──────────────────────────────────────────────────────────┐
+    │                   RENDERED UI                            │
+    │  ┌────────────────────────────────────────────────────┐  │
+    │  │ 👤 User: What is prompt caching?                  │  │
+    │  └────────────────────────────────────────────────────┘  │
+    │                                                          │
+    │  ┌────────────────────────────────────────────────────┐  │
+    │  │ 🤖 Assistant:                                      │  │
+    │  │                                                    │  │
+    │  │ Prompt caching is a technique that retains the    │  │
+    │  │ results of processing prompts between invocations │  │
+    │  │ to the model. This allows you to reuse previously │  │
+    │  │ processed prompt segments, which significantly    │  │
+    │  │ reduces both cost and latency...                  │  │
+    │  │                                                    │  │
+    │  │ ▸ Sources (click to expand)                       │  │
+    │  │   • Building Towards Computer Use - Lesson 0      │  │
+    │  └────────────────────────────────────────────────────┘  │
+    └──────────────────────────────────────────────────────────┘
+
+
+╔═══════════════════════════════════════════════════════════════════════════════════════════════╗
+║                                   KEY COMPONENTS                                              ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════════╝
+
+Frontend (JavaScript)          Backend (Python)                External Services
+─────────────────────          ────────────────                ─────────────────
+• script.js                    • app.py                        • Anthropic API
+  - User interaction             - FastAPI routes                - Claude Sonnet 4
+  - API calls                    - Request/response              - Tool calling
+  - UI rendering
+                               • rag_system.py                 • ChromaDB
+• index.html                     - Query orchestration           - Vector storage
+  - Chat interface               - Component coordination        - Semantic search
+  - Message display                                              - Embeddings
+                               • ai_generator.py
+• style.css                      - Claude API integration      • Sentence Transformers
+  - Dark theme                   - Tool execution handling       - all-MiniLM-L6-v2
+  - Responsive layout                                            - Text embeddings
+                               • vector_store.py
+• marked.js                      - ChromaDB interface
+  - Markdown parsing             - Semantic search
+                                 - Course resolution
+
+                               • search_tools.py
+                                 - Tool definitions
+                                 - Result formatting
+                                 - Source tracking
+
+                               • session_manager.py
+                                 - Conversation history
+                                 - Session management
+
+                               • document_processor.py
+                                 - Text chunking
+                                 - Metadata extraction
+
+
+╔═══════════════════════════════════════════════════════════════════════════════════════════════╗
+║                                    DATA FLOW SUMMARY                                          ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════════╝
+
+1. User Query       → Frontend captures input
+2. HTTP POST        → Sends to /api/query endpoint
+3. Session Check    → Create or retrieve session
+4. History Lookup   → Get conversation context (if exists)
+5. Claude Call #1   → AI analyzes query, decides to use tool
+6. Tool Execution   → Search course content in ChromaDB
+7. Vector Search    → Semantic similarity search (embeddings)
+8. Format Results   → Structure results + track sources
+9. Claude Call #2   → AI synthesizes natural language answer
+10. Store History   → Save exchange to session
+11. HTTP Response   → Return answer + sources + session_id
+12. UI Update       → Render markdown answer with sources
